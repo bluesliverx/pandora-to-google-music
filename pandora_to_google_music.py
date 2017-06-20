@@ -16,8 +16,8 @@ class LoginException(Exception):
 
 class PandoraClient(object):
     LOGIN_URL = "https://www.pandora.com/login.vm"
-    LIKES_URL = "http://www.pandora.com/content/tracklikes"
-    STATIONS_URL = "http://www.pandora.com/content/stations"
+    LIKES_URL = "https://www.pandora.com/content/tracklikes"
+    STATIONS_URL = "https://www.pandora.com/content/stations"
 
     def __init__(self, email, password):
         self.session = requests.session()
