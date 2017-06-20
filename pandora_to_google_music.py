@@ -262,7 +262,7 @@ def sync_gmusic_playlists(client, playlists):
 
     # Update Google Music playlists
     for playlist_name, songs in playlists.items():
-        song_map = {song["track"]["nid"]: song for song in songs}
+        song_map = {song["track"]["storeId"]: song for song in songs}
         song_ids = set(song_map.keys())
 
         print_section_heading('Syncing "%s" (%d songs)' % (playlist_name, len(song_ids)))
