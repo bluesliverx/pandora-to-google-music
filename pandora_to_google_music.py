@@ -5,98 +5,47 @@ from getpass import getpass
 from collections import defaultdict
 import difflib
 
-import requests
+from pandora.clientbuilder import PydoraConfigFileBuilder
 from gmusicapi import Mobileclient
 from termcolor import colored
-from lxml import html
 import unidecode
 
 class LoginException(Exception):
     pass
 
 class PandoraClient(object):
-    LOGIN_URL = "https://www.pandora.com/login.vm"
-    LIKES_URL = "https://www.pandora.com/content/tracklikes"
-    STATIONS_URL = "https://www.pandora.com/content/stations"
-
-    def __init__(self, email, password):
-        self.session = requests.session()
-
-        response = self.session.post(PandoraClient.LOGIN_URL, data={
-            "login_username": email,
-            "login_password": password,
-        })
-
-        if "0;url=http://www.pandora.com/people/" not in response.text:
-            raise LoginException("Pandora login failed, check email and password")
+    def __init__(self):
+        self.client = PydoraConfigFileBuilder().build()
+        stations = self.client.get_station_list()
+        self.liked_songs = {} 
+        self.station_names = []
+        for station in stations:
+            self.station_names.append(station.name)
+            station = self.client.get_station(station.token)
+            likes = []
+            songs = station.seeds.songs if station.seeds else []
+            for song in songs:
+                if song.song_name=='Multiple Streams':
+                    continue
+                song_tuple = (song.artist_name, song.song_name)
+                likes.append(song_tuple)
+            songs = station.feedback.thumbs_up if station.feedback else []
+            for song in songs:
+                if song.song_name=='Multiple Streams':
+                    continue
+                likes.append((song.artist_name, song.song_name))
+            songs = station.feedback.thumbs_down if station.feedback else []
+            for song in songs:
+                if song.song_name=='Multiple Streams':
+                    continue
+                #playlist['unliked'].append((song.artist_name, song.song_name))
+            self.liked_songs[station.name] = likes
 
     def liked_tracks(self):
-        """ Scrape likes from the Pandora web interface """
-
-        like_start_index = 0
-        thumb_start_index = 0
-
-        tracks = defaultdict(list)
-        more_pages = True
-        page = 1
-
-        while more_pages:
-            response = self.session.get(PandoraClient.LIKES_URL, params={
-                "likeStartIndex": like_start_index,
-                "thumbStartIndex": thumb_start_index,
-            })
-
-            print_section_heading('Fetching Pandora Likes (page %d)' % page)
-
-            tree = html.fromstring(response.text)
-
-            for element in tree.find_class("infobox-body"):
-                title = unicode(element.find("h3").text_content())
-                title = title.strip()
-
-                artist = unicode(element.find("p").text_content())
-                artist = artist.strip()
-                artist = re.sub(r"^by\s+", "", artist)
-
-                station_elements = element.find_class("like_context_stationname")
-
-                if station_elements:
-                    station_name = unicode(station_elements[0].text_content())
-                    station_name = station_name.strip()
-                else:
-                    # Bookmarked track
-                    station_name = None
-
-                tracks[station_name].append((artist, title))
-
-                print_song(artist, title)
-
-            more_elements = tree.find_class("show_more")
-
-            # There are more pages
-            if more_elements:
-                like_start_index = more_elements[0].get("data-nextlikestartindex")
-                thumb_start_index = more_elements[0].get("data-nextthumbstartindex")
-            else:
-                more_pages = False
-
-            page += 1
-
-        return tracks
+        return self.liked_songs
 
     def stations(self):
-        """ Scrape station names from the Pandora web interface """
-
-        response = self.session.get(PandoraClient.STATIONS_URL)
-        tree = html.fromstring(response.text)
-
-        stations = []
-
-        for element in tree.findall(".//h3"):
-            station_name = unicode(element.text_content().strip())
-            stations.append(station_name)
-
-        return stations
+        return self.station_names
 
 def normalise_metadata1(value):
     """ Normalise a piece of song metadata for searching """
@@ -321,15 +270,15 @@ def sync_gmusic_playlists(client, playlists):
 
     return songs_added, songs_removed
 
-def pandora_to_google_music(pandora_email, pandora_password, gmusic_email, gmusic_password):
+def pandora_to_google_music(gmusic_email, gmusic_password, playlist_prefix):
     """ Sync Pandora likes with Google Music playlists """
 
-    gmusic_client = Mobileclient()
-    gmusic_logged_in = gmusic_client.login(gmusic_email, gmusic_password, Mobileclient.FROM_MAC_ADDRESS)
-    if not gmusic_logged_in:
-      raise LoginException("Google Music login failed, check email and password?")
+    #gmusic_client = Mobileclient()
+    #gmusic_logged_in = gmusic_client.login(gmusic_email, gmusic_password, Mobileclient.FROM_MAC_ADDRESS)
+    #if not gmusic_logged_in:
+    #  raise LoginException("Google Music login failed, check email and password?")
 
-    pandora_client = PandoraClient(pandora_email, pandora_password)
+    pandora_client = PandoraClient()
 
     # Get liked Pandora tracks
     pandora_likes = pandora_client.liked_tracks()
@@ -349,7 +298,7 @@ def pandora_to_google_music(pandora_email, pandora_password, gmusic_email, gmusi
 
         # Check station hasn't been deleted
         if station_name in pandora_stations:
-            pandora_playlists["Pandora - %s" % station_name] = songs
+            pandora_playlists["%s%s" % (playlist_prefix, station_name)] = songs
 
     # Match Pandora likes with Google Music
     playlists = match_playlists_with_gmusic(gmusic_client, pandora_playlists)
@@ -370,19 +319,20 @@ def pandora_to_google_music(pandora_email, pandora_password, gmusic_email, gmusi
 def main():
     """ Run pandora_to_google_music """
 
-    pandora_email = raw_input("Pandora email: ")
-    pandora_password = getpass("Pandora password: ")
-    gmusic_email = raw_input("Google Music email [%s]: " % pandora_email)
+    gmusic_email = raw_input("Google Music email: ")
     gmusic_password = getpass("Google Music password: ")
+    playlist_prefix = raw_input("Playlist prefix [Pandora - ], enter space for none: ")
 
-    if gmusic_email == "":
-        gmusic_email = pandora_email
+    if playlist_prefix == "":
+        playlist_prefix = "Pandora - "
+    if not playlist_prefix.strip():
+        playlist_prefix = ""
+    print "Using playlist prefix of '%s'" % playlist_prefix
 
     pandora_to_google_music(
-        pandora_email,
-        pandora_password,
         gmusic_email,
-        gmusic_password
+        gmusic_password,
+        playlist_prefix,
     )
 
 if __name__ == "__main__":

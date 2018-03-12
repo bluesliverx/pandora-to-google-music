@@ -17,6 +17,10 @@ apt-get install libxml2-dev libxslt-dev
 virtualenv venv
 source venv/bin/activate
 pip install -r requirements.txt
+
+# Step 3: Configure pydora (pandora connection)
+source venv/bin/activate
+pydora-configure
 ```
 
 ## Usage
